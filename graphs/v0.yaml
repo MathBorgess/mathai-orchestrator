@@ -1,0 +1,19 @@
+id: v0
+nodes:
+  - id: scout
+    role: scout
+    prompt: prompts/scout.md
+    cwd: "."
+  - id: builder
+    role: builder
+    prompt: prompts/builder.md
+    cwd: "."
+edges:
+  - from: scout
+    to: builder
+    on: artifact_exists
+    artifact: handoff.md
+stop:
+  when: node_done
+  node: builder
+  artifact: DONE.md
