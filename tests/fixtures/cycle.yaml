@@ -1,0 +1,23 @@
+id: cycle
+nodes:
+  - id: scout
+    role: scout
+    prompt: tests/fixtures/prompt.md
+    cwd: "."
+  - id: builder
+    role: builder
+    prompt: tests/fixtures/prompt.md
+    cwd: "."
+edges:
+  - from: scout
+    to: builder
+    on: artifact_exists
+    artifact: handoff.md
+  - from: builder
+    to: scout
+    on: artifact_exists
+    artifact: back.md
+stop:
+  when: node_done
+  node: builder
+  artifact: DONE.md

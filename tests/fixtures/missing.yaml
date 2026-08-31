@@ -1,0 +1,15 @@
+id: missing
+nodes:
+  - id: scout
+    role: scout
+    prompt: tests/fixtures/prompt.md
+    cwd: "."
+edges:
+  - from: scout
+    to: builder
+    on: artifact_exists
+    artifact: handoff.md
+stop:
+  when: node_done
+  node: scout
+  artifact: DONE.md
