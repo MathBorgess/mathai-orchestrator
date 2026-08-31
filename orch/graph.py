@@ -113,7 +113,7 @@ def load_graph(path: Path) -> Graph:
             raise GraphError("each edge must be a mapping")
         source = _require_str(item, "from")
         target = _require_str(item, "to")
-        on = _require_str(item, "on")
+        on = _edge_predicate(item)
         artifact = _require_str(item, "artifact")
         if source not in nodes:
             raise GraphError(f"edge points to missing node: {source}")
@@ -150,6 +150,19 @@ def load_graph(path: Path) -> Graph:
         )
 
     return Graph(id=graph_id, path=path, nodes=resolved, edges=tuple(edges), stop=stop)
+
+
+def _edge_predicate(item: dict) -> str:
+    # PyYAML 1.1 treats the key `on` as boolean True. The spec file uses `on:`.
+    if "on" in item:
+        value = item["on"]
+    elif True in item:
+        value = item[True]
+    else:
+        raise GraphError("missing or empty 'on'")
+    if not isinstance(value, str) or not value:
+        raise GraphError("missing or empty 'on'")
+    return value
 
 
 def _require_str(mapping: dict, key: str) -> str:
