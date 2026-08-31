@@ -69,6 +69,7 @@ def compute(
     stop_reason: str,
     concurrency: dict[str, Any],
     diagnostic: dict[str, Any],
+    team_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     speedup = _ratio(graph_arm.sum_node_wall, graph_arm.wall_seconds)
     cost_ratio = _ratio(graph_arm.log_bytes, baseline_arm.log_bytes)
@@ -85,6 +86,9 @@ def compute(
     return {
         "schema": "orch/verdict/1",
         "graph": graph_id,
+        # Two runs are aggregable only if this matches. Summing the verdicts of two
+        # different teams measures the change of team, not the change of task.
+        "team_fingerprint": team_fingerprint,
         "session_dir": str(session_dir),
         "seed": seed,
         "comparable": True,

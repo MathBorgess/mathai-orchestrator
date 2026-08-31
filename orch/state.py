@@ -79,6 +79,11 @@ class Ledger:
             "utilization": None,
         }
         self.violations: list[dict[str, Any]] = []
+        # Everything the runtime decided that the declaration did not say. The
+        # declaration in `graphs/` is read-only at runtime (SPEC amendment B); a
+        # runtime decision is recorded here as a deviation against it, and never
+        # written back into the YAML.
+        self.deviations: list[dict[str, Any]] = []
         self.mutations: list[dict[str, Any]] = []
         self.preflight: dict[str, Any] = {}
 
@@ -134,6 +139,20 @@ class Ledger:
             rec.hashes.append(sha256)
         self.write()
 
+    def add_deviation(
+        self, kind: str, *, declared: Any, effective: Any, why: str = ""
+    ) -> None:
+        self.deviations.append(
+            {
+                "ts": utc_now(),
+                "kind": kind,
+                "declared": declared,
+                "effective": effective,
+                "why": why,
+            }
+        )
+        self.write()
+
     def add_violation(self, node: str, path: str, kind: str) -> None:
         self.violations.append({"node": node, "path": path, "kind": kind})
         self.write()
@@ -144,6 +163,7 @@ class Ledger:
             "artifacts": {k: v.as_dict() for k, v in self.artifacts.items()},
             "budget": dict(self.budget),
             "violations": list(self.violations),
+            "deviations": list(self.deviations),
             "mutations": list(self.mutations),
             "preflight": dict(self.preflight),
         }

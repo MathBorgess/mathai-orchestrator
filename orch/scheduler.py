@@ -106,6 +106,8 @@ def run_session(
     window_events: list[str] = []
     inflight: dict[str, Slot] = {}
     futures: dict[Future[Completion], str] = {}
+    launch_order: list[str] = []
+    degraded_at: set[int] = set()
     max_workers = max(1, concurrency)
 
     if only_node is not None and only_node not in runnable:
@@ -129,6 +131,15 @@ def run_session(
 
             ceiling = gate.ceiling() or 1
             effective = max(1, min(concurrency, graph.width, ceiling))
+            if ceiling < min(concurrency, graph.width) and ceiling not in degraded_at:
+                degraded_at.add(ceiling)
+                session.ledger.add_deviation(
+                    "concurrency_degraded",
+                    declared=min(concurrency, graph.width),
+                    effective=effective,
+                    why=f"window utilization {gate.utilization}: the gate degrades, "
+                    "the declaration does not change",
+                )
             if only_node is not None:
                 effective = 1
                 ready = (
@@ -149,6 +160,7 @@ def run_session(
                     other.overlap.update(node.writes)
                     slot.overlap.update(other.node.writes)
                 inflight[node.id] = slot
+                launch_order.append(node.id)
                 futures[
                     executor.submit(_worker, session, adapter, slot, seed)
                 ] = node.id
@@ -189,6 +201,12 @@ def run_session(
         executor.shutdown(wait=True, cancel_futures=True)
         _remove_worktrees(session, inflight)
 
+    session.ledger.add_deviation(
+        "launch_order",
+        declared="ready-set; the declaration fixes no order",
+        effective=launch_order,
+        why="the order is a runtime decision recomputed on every completion",
+    )
     wall = time.time() - started
     if window_events:
         stop_reason = f"{stop_reason} · {' · '.join(sorted(set(window_events)))}"

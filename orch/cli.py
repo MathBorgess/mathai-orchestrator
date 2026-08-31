@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from orch import __version__
+from orch import team as team_mod
 from orch import verdict as verdict_mod
 from orch import worktree as wt
 from orch.adapters.claude import ClaudeAdapter
@@ -24,6 +25,7 @@ from orch.env import parent_had_api_key
 from orch.errors import (
     EXIT_BASELINE,
     EXIT_BUG,
+    EXIT_GRAPH,
     EXIT_OK,
     GraphError,
     OrchError,
@@ -58,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_doctor()
         if args.cmd == "up":
             return cmd_up(args)
+        if args.cmd == "team":
+            return cmd_team(args)
         raise UsageError(f"unknown command {args.cmd}")
     except GraphError as exc:
         print(f"orch: invalid graph ({exc.message})", file=sys.stderr)
@@ -122,7 +126,114 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="recover an orphan lock (permanent mark in preflight)",
     )
+
+    team = sub.add_parser(
+        "team",
+        help="the team is code: lint, show, diff and fingerprint the declaration",
+        description=(
+            "The graph lives in the repo of the project it works on: it changes in a "
+            "PR, it diffs, it has blame. `orch team` is what makes that reviewable. "
+            "The runtime never writes to graphs/ — what it decides goes to "
+            "state.json as a declared deviation."
+        ),
+    )
+    team_sub = team.add_subparsers(dest="team_cmd", required=True)
+
+    lint = team_sub.add_parser(
+        "lint",
+        help="run the loader's refusal list without spawning anything (pre-commit, CI)",
+    )
+    lint.add_argument("graph", nargs="+", help="one or more graphs/<id>.yaml")
+
+    show = team_sub.add_parser(
+        "show", help="render the team for the human reviewing the PR"
+    )
+    show.add_argument("graph")
+
+    diff = team_sub.add_parser(
+        "diff",
+        help="semantic diff: what changed in power, not what changed in lines",
+    )
+    diff.add_argument("base", help="the graph as it is on the base branch")
+    diff.add_argument("head", help="the graph as it is on the head branch")
+    diff.add_argument(
+        "--fail-on-widening",
+        action="store_true",
+        help="exit 50 when any change widens power (write contract, budget, tools, "
+        "fanout ceiling, loosened gate). For a CI policy gate.",
+    )
+
+    fp = team_sub.add_parser(
+        "fingerprint",
+        help="stable semantic hash of the declaration; two runs aggregate only if it matches",
+    )
+    fp.add_argument(
+        "path",
+        nargs="+",
+        help="a graphs/<id>.yaml, or a session dir whose verdict/state carries one",
+    )
+    fp.add_argument(
+        "--require-same",
+        action="store_true",
+        help="exit 50 when the paths are not the same team (aggregation guard)",
+    )
     return parser
+
+
+def cmd_team(args: argparse.Namespace) -> int:
+    if args.team_cmd == "lint":
+        return _team_lint(args.graph)
+    if args.team_cmd == "show":
+        loaded = team_mod.try_load(args.graph)
+        if not loaded.ok:
+            raise loaded.error  # type: ignore[misc]
+        assert loaded.graph is not None
+        print(team_mod.render_show(loaded.graph))
+        return EXIT_OK
+    if args.team_cmd == "diff":
+        base = team_mod.try_load(args.base)
+        head = team_mod.try_load(args.head)
+        text, changes = team_mod.render_diff(base, head)
+        print(text)
+        if not base.ok or not head.ok:
+            return EXIT_GRAPH
+        if args.fail_on_widening and any(c.severity == team_mod.WIDENS for c in changes):
+            print(
+                "orch: refused by --fail-on-widening (a change widens what the team "
+                "may do).",
+                file=sys.stderr,
+            )
+            return EXIT_GRAPH
+        return EXIT_OK
+    if args.team_cmd == "fingerprint":
+        pairs = [team_mod.read_fingerprint(Path(p)) for p in args.path]
+        text, same = team_mod.render_fingerprints(pairs)
+        print(text)
+        if any(fp is None for fp, _ in pairs) and len(pairs) == 1:
+            return EXIT_GRAPH
+        if args.require_same and not same:
+            return EXIT_GRAPH
+        return EXIT_OK
+    raise UsageError(f"unknown team subcommand {args.team_cmd}")
+
+
+def _team_lint(paths: list[str]) -> int:
+    worst = EXIT_OK
+    for raw in paths:
+        loaded = team_mod.try_load(raw)
+        if loaded.ok:
+            assert loaded.graph is not None
+            print(
+                f"ok    {raw}  id={loaded.graph.id}  "
+                f"fingerprint {team_mod.short(team_mod.fingerprint(loaded.graph))}  "
+                f"nós={len(loaded.graph.runnable_nodes())}  "
+                f"largura={loaded.graph.width}  stop={list(loaded.graph.stop.all_of)}"
+            )
+        else:
+            assert loaded.error is not None
+            print(f"RECUSA {raw}  {loaded.error.message}", file=sys.stderr)
+            worst = EXIT_GRAPH
+    return worst
 
 
 def cmd_doctor() -> int:
@@ -171,6 +282,8 @@ def cmd_up(args: argparse.Namespace) -> int:
     isolate, concurrency, isolation_note = _isolation(
         graph, concurrency, args.max_concurrency
     )
+    team_fingerprint = team_mod.fingerprint(graph)
+    declaration_sha = team_mod.declaration_tree_sha256(graph.root)
 
     if args.no_baseline:
         # SPEC §7: the escape hatch exists, and it is noisy.
@@ -180,6 +293,8 @@ def cmd_up(args: argparse.Namespace) -> int:
     adapter = ClaudeAdapter()
     preflight_base: dict[str, Any] = {
         "graph_sha256": graph.sha256,
+        "team_fingerprint": team_fingerprint,
+        "declaration_tree_sha256": declaration_sha,
         "concurrency_requested": args.max_concurrency,
         "concurrency_effective": concurrency,
         "graph_width": graph.width,
@@ -245,7 +360,9 @@ def cmd_up(args: argparse.Namespace) -> int:
         only_node=args.node,
     )
     session.ledger.budget["wall_seconds"] = round(result.wall_seconds, 3)
+    _record_declared_deviations(session, graph, args, concurrency, isolate)
     session.ledger.write()
+    _assert_declaration_untouched(session, graph, declaration_sha)
 
     print()
     print(
@@ -336,6 +453,7 @@ def _emit_verdict(
         )
         return
     payload = verdict_mod.compute(
+        team_fingerprint=session.ledger.preflight.get("team_fingerprint"),
         graph_arm=result.metrics,
         baseline_arm=baseline_metrics,
         graph_id=str(args.graph),
@@ -350,6 +468,56 @@ def _emit_verdict(
 
 
 # ------------------------------------------------------------------ helpers
+
+
+def _record_declared_deviations(
+    session: Session,
+    graph: Graph,
+    args: argparse.Namespace,
+    concurrency: int,
+    isolate: bool,
+) -> None:
+    """Everything the runtime chose that the YAML did not say. It lives here, in
+    `state.json`, and never goes back into `graphs/` (SPEC amendment B)."""
+    ledger = session.ledger
+    ledger.add_deviation(
+        "concurrency",
+        declared=args.max_concurrency,
+        effective=concurrency,
+        why=f"auto = min(graph width {graph.width}, 3), then the window gate",
+    )
+    ledger.add_deviation(
+        "isolation",
+        declared="worktree per fanout instance when concurrency > 1 (SPEC §2.4)",
+        effective="worktree" if isolate else "cwd",
+        why=session.ledger.preflight.get("isolation_note", ""),
+    )
+    if args.no_baseline:
+        ledger.add_deviation(
+            "baseline",
+            declared="mandatory in the graph file (SPEC §1.6)",
+            effective="skipped by --no-baseline",
+            why="command line only; it cannot be expressed in the YAML",
+        )
+
+
+def _assert_declaration_untouched(
+    session: Session, graph: Graph, before_sha: str
+) -> None:
+    """The invariant that keeps the declaration and the runtime from becoming two
+    truths: `graphs/` is read-only while a session runs. If this ever fires, the
+    runtime learned to write the declaration, and that is a decision somebody has to
+    take on purpose — not a side effect."""
+    after_sha = team_mod.declaration_tree_sha256(graph.root)
+    session.ledger.preflight["declaration_tree_sha256_after"] = after_sha
+    session.ledger.write()
+    if after_sha != before_sha:
+        raise OrchError(
+            "the runtime wrote to the declaration: graphs/ changed during the "
+            f"session ({before_sha[:12]} → {after_sha[:12]}). The declaration is "
+            "read-only at runtime; what the runtime decides belongs in "
+            "state.json.deviations. This is a bug in orch (SPEC amendment B)."
+        )
 
 
 def _requested_concurrency(flag: str) -> int:
