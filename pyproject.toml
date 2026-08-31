@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mathai-orchestrator"
+version = "0.0.0"
+description = "v0 orchestrator: one graph, one session, scout → builder"
+requires-python = ">=3.11"
+dependencies = ["pyyaml>=6.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+include = ["orch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

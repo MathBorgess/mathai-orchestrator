@@ -18,9 +18,17 @@ Você declara o time num arquivo versionado, roda a mesma tarefa com dois times 
 - Quem **não consegue rodar a mesma tarefa duas vezes** → sem repetição não existe medida.
 - Quem quer o painel e não quer o veredito. Se o número disser que seu time de 3 agentes é pior que 1 agente solo, esse número vai ser impresso.
 
-## Estado — 2026-08-30
+## v0
 
-Nenhuma linha de runtime escrita, por decisão. O que existe é a spec, a pesquisa e o pré-registro.
+```
+python -m orch up graphs/v0.yaml --session-dir .sessions/<id>
+```
+
+One graph, one session = one team. Serial `scout` → `builder`. The visible handoff is `handoff.md`. The session exits 0 when `builder` is `done` and `DONE.md` exists; any `failed` node exits 1. Claude Code Pro via `claude -p` only — no Anthropic API key.
+
+## Estado — 2026-08-31
+
+v0 runtime is in `orch/` (MAT-97). v1 remains spec-only.
 
 A spec é **paralela desde o v1**: o `fanout` é a forma única de declarar concorrência, o teto é 3, a concorrência default é `auto` degradando por utilização da janela, e o veredito imprime o número que separa paralelismo útil de paralelismo decorativo.
 
@@ -33,7 +41,7 @@ A spec é **paralela desde o v1**: o `fanout` é a forma única de declarar conc
 | [`graphs/v1.yaml`](graphs/v1.yaml) · [`graphs/v0.yaml`](graphs/v0.yaml) | o grafo paralelo (scout → fanout×3 → join → 2 checks) e a cadeia de 2 nós |
 | [`research/`](research/) | teardown do Maestri, mesa-redonda, dossiê de fontes, os 4 memoriais íntegros e os [rascunhos da spec v1](research/spec-v1-drafts/) |
 
-**Implementação (MAT-97):** só depois dos bloqueadores do [`EXPERIMENTO.md`](EXPERIMENTO.md) §4.
+**Implementação (MAT-97):** v0 is `python -m orch up graphs/v0.yaml --session-dir .sessions/<id>`. v1 waits on [`EXPERIMENTO.md`](EXPERIMENTO.md) §4.
 
 ## Pesquisa
 
