@@ -85,3 +85,15 @@ def test_second_up_refuses_nonempty_session(fake_claude: Path, tmp_path: Path) -
     ]
     assert main(args) == EXIT_OK
     assert main(args) == EXIT_USAGE
+
+
+def test_doctor_probe_does_not_write_in_the_operator_cwd(
+    fake_claude: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """The probe must not leave files in the directory the operator is standing in,
+    and must not register that project in the CLI cache just to answer `doctor`."""
+    workdir = tmp_path / "someones-repo"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    assert main(["doctor"]) == EXIT_OK
+    assert list(workdir.iterdir()) == []

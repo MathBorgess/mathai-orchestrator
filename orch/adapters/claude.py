@@ -7,6 +7,7 @@ import os
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -75,9 +76,13 @@ class ClaudeAdapter:
     ) -> dict[str, Any]:
         argv = [binary, "-p", "--output-format", "json"]
         _refuse_bare(argv)
-        captured = _run_capture(
-            argv, env, timeout_s=timeout_s, stdin=b"reply OK\n"
-        )
+        # The probe runs in a throwaway directory, never in the operator's cwd: it
+        # must not create files there, and it must not register the project the
+        # operator happens to be standing in as a CLI project directory.
+        with tempfile.TemporaryDirectory(prefix="orch-doctor-") as sandbox:
+            captured = _run_capture(
+                argv, env, timeout_s=timeout_s, stdin=b"reply OK\n", cwd=sandbox
+            )
         if captured.rc != 0:
             raise PreflightError(
                 f"doctor probe failed (exit {captured.rc}). {AUTH_LOGIN_HINT}. "
@@ -308,6 +313,7 @@ def _run_capture(
     env: dict[str, str],
     timeout_s: float,
     stdin: bytes | None = None,
+    cwd: str | None = None,
 ) -> _Captured:
     _refuse_bare(argv)
     try:
@@ -317,6 +323,7 @@ def _run_capture(
             capture_output=True,
             timeout=timeout_s,
             env=env,
+            cwd=cwd,
             start_new_session=True,
         )
     except FileNotFoundError as exc:
