@@ -23,6 +23,10 @@ class NodeState:
     iters_used: int = 0
     attempts: int = 0
     session_ref: str | None = None
+    wall_seconds: float = 0.0
+    log_bytes: int = 0
+    cost_units: float = 0.0
+    rc: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -33,6 +37,10 @@ class NodeState:
             "iters_used": self.iters_used,
             "attempts": self.attempts,
             "session_ref": self.session_ref,
+            "wall_seconds": round(self.wall_seconds, 3),
+            "log_bytes": self.log_bytes,
+            "cost_units": round(self.cost_units, 6),
+            "rc": self.rc,
         }
 
 

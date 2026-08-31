@@ -52,7 +52,16 @@ def write_violations(
     before: dict[str, tuple[str, float]],
     after: dict[str, tuple[str, float]],
     writes: tuple[str, ...],
+    ignore: tuple[str, ...] = (),
 ) -> list[str]:
+    """Paths changed under `root` that no glob in `writes` covers.
+
+    `ignore` carries the write globs of the nodes that were in flight at the same
+    time. Under concurrency the tree diff of one node also contains the writes of
+    its siblings; attributing those to this node would be a false violation. It is
+    sound because the loader already proved the fanout partitions disjoint by
+    literal prefix (SPEC §1.4) — the filter never hides a real overlap, because a
+    real overlap is a load error, not a runtime one."""
     allowed = writes
     changed = set()
     for path, (digest, _) in after.items():
@@ -62,7 +71,12 @@ def write_violations(
     for path in before:
         if path not in after:
             changed.add(path)
-    bad = [p for p in sorted(changed) if not any(_matches_write(p, g) for g in allowed)]
+    bad = [
+        p
+        for p in sorted(changed)
+        if not any(_matches_write(p, g) for g in allowed)
+        and not any(_matches_write(p, g) for g in ignore)
+    ]
     return bad
 
 

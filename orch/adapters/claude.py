@@ -10,7 +10,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from orch.env import child_env, parent_had_api_key
 from orch.errors import BareForbidden, PreflightError
@@ -109,6 +109,8 @@ class ClaudeAdapter:
         cwd: Path,
         stdout_path: Path,
         stderr_path: Path,
+        seed: int | None = None,
+        add_dirs: tuple[Path, ...] = (),
     ) -> Spawn:
         model = node.model or "sonnet"
         budget = node.budget_units if node.budget_units is not None else 1.0
@@ -140,13 +142,20 @@ class ClaudeAdapter:
             "--append-system-prompt",
             preamble,
         ]
+        for extra_dir in add_dirs:
+            argv.extend(["--add-dir", str(extra_dir)])
         _refuse_bare(argv)
         extra = {
             "ORCH_SESSION_DIR": str(session_dir),
             "ORCH_NODE_ID": node.id,
         }
-        if node.writes:
-            extra["ORCH_ARTIFACT"] = node.writes[0]
+        if seed is not None:
+            # The CLI exposes no seed knob; the seed labels the sample in the series
+            # and reaches the child as a declared fact, not as a sampling parameter.
+            extra["ORCH_SEED"] = str(seed)
+        concrete = [w for w in node.writes if not any(c in w for c in "*?[")]
+        if concrete:
+            extra["ORCH_ARTIFACT"] = concrete[0]
         env, _ = child_env(extra=extra)
         return Spawn(
             argv=argv,
@@ -158,12 +167,12 @@ class ClaudeAdapter:
             stderr_path=str(stderr_path),
         )
 
-    def spawn(self, spec: Spawn) -> int:
+    def spawn(self, spec: Spawn, on_start: Callable[[Any], None] | None = None) -> int:
         _refuse_bare(spec.argv)
         for key in spec.env:
             if key.startswith("ANTHROPIC_") or key.startswith("CLAUDE"):
                 raise PreflightError(f"child env leaked {key}")
-        return run_process_group(spec)
+        return run_process_group(spec, on_start=on_start)
 
     def parse(self, rc: int, stdout_path: str | Path, stderr_path: str | Path) -> Outcome:
         result, rate, degraded = _read_stream(Path(stdout_path))
@@ -323,7 +332,9 @@ def _run_capture(
     )
 
 
-def run_process_group(spec: Spawn) -> int:
+def run_process_group(
+    spec: Spawn, on_start: Callable[[Any], None] | None = None
+) -> int:
     Path(spec.stdout_path).parent.mkdir(parents=True, exist_ok=True)
     Path(spec.stderr_path).parent.mkdir(parents=True, exist_ok=True)
     with open(spec.stdout_path, "wb") as out, open(spec.stderr_path, "wb") as err:
@@ -339,20 +350,29 @@ def run_process_group(spec: Spawn) -> int:
             )
         except FileNotFoundError as exc:
             raise PreflightError(f"failed to exec {spec.argv[0]}: {exc}") from exc
+        if on_start is not None:
+            on_start(proc)
         try:
             proc.communicate(spec.stdin_bytes, timeout=spec.timeout_s)
         except subprocess.TimeoutExpired:
-            _killpg(proc)
+            kill_process_group(proc)
             raise TimeoutError(spec.timeout_s)
         return int(proc.returncode)
 
 
-def _killpg(proc: subprocess.Popen[bytes]) -> None:
+def kill_process_group(proc: subprocess.Popen[bytes]) -> None:
+    """SPEC §3.5-1: the child spawns grandchildren (the Bash tool). kill() leaves them
+    holding the worktree and writing to the artifact after the node was declared dead.
+    start_new_session=True, then killpg(SIGTERM) -> 5s grace -> SIGKILL."""
     if proc.pid is None:
+        return
+    if proc.poll() is not None:
         return
     try:
         os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
+    except OSError:
+        # Already reaped, or a pid the OS refuses. Never let one stuck node stop the
+        # cleanup of the others: the drain has to reach every slot.
         return
     deadline = time.time() + 5
     while time.time() < deadline:
@@ -361,6 +381,6 @@ def _killpg(proc: subprocess.Popen[bytes]) -> None:
         time.sleep(0.05)
     try:
         os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
+    except OSError:
         return
     proc.wait()

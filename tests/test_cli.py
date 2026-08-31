@@ -17,18 +17,6 @@ def test_validate_only_refuses_v0() -> None:
     assert main(["up", str(REPO / "graphs" / "v0.yaml"), "--validate-only"]) == EXIT_GRAPH
 
 
-def test_up_requires_no_baseline_in_this_slice(tmp_path: Path) -> None:
-    code = main(
-        [
-            "up",
-            str(REPO / "graphs" / "v1.yaml"),
-            "--session-dir",
-            str(tmp_path / "s"),
-        ]
-    )
-    assert code == EXIT_USAGE
-
-
 def test_doctor_with_fake_claude(fake_claude: Path, capsys) -> None:
     assert main(["doctor"]) == EXIT_OK
     out = capsys.readouterr().out
@@ -37,6 +25,20 @@ def test_doctor_with_fake_claude(fake_claude: Path, capsys) -> None:
     assert "permission_denials" in out
     assert "--bare forbidden" in out
     assert "claude auth login" in out
+
+
+def test_max_concurrency_4_is_refused_not_clamped(fake_claude: Path, tmp_path: Path) -> None:
+    code = main(
+        [
+            "up",
+            str(REPO / "graphs" / "v1.yaml"),
+            "--session-dir",
+            str(tmp_path / "s"),
+            "--max-concurrency",
+            "4",
+        ]
+    )
+    assert code == EXIT_USAGE
 
 
 def test_up_spawns_one_claude_node(fake_claude: Path, tmp_path: Path) -> None:
@@ -56,7 +58,7 @@ def test_up_spawns_one_claude_node(fake_claude: Path, tmp_path: Path) -> None:
     state = json.loads((session / "state.json").read_text())
     assert state["nodes"]["scout"]["status"] == "done"
     assert state["preflight"]["comparable"] is False
-    assert state["preflight"]["concurrency_stubbed"] is True
+    assert state["nodes"]["scout"]["wall_seconds"] > 0
     assert (session / "graph.yaml").read_bytes() == (REPO / "graphs" / "v1.yaml").read_bytes()
     assert (session / "handoff.md").is_file()
     argv = json.loads((session / "artifacts" / "last-argv.json").read_text())
@@ -66,6 +68,7 @@ def test_up_spawns_one_claude_node(fake_claude: Path, tmp_path: Path) -> None:
     assert "--bare" not in argv
     events = (session / "events.jsonl").read_text().strip().splitlines()
     assert any('"to": "running"' in line for line in events)
+    assert any('"to": "verifying"' in line for line in events)
     assert any('"to": "done"' in line for line in events)
 
 
