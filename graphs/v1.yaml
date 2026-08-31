@@ -1,0 +1,148 @@
+# Grafo canônico do v1 — cadeia curta, fanout de 3, um join, dois checks.
+# Spec: ../SPEC.md. Toda trava abaixo tem a seção que a justifica.
+id: v1
+
+# --- braço de controle. Obrigatório (SPEC §1.6). Roda primeiro e serial (SPEC §2.3).
+baseline:
+  adapter: claude
+  prompt: prompts/baseline.md            # o procedimento inteiro num nó só
+  cwd: "."
+  writes: ["out/**"]                     # namespace próprio: roda em session_dir/baseline/
+  budget_units: 3.00
+  timeout_seconds: 1800
+  compare_on: [speedup, cost_ratio, delta_gate]
+
+# --- três camadas de bound. A terceira é incondicional e não é ablável (SPEC §6.1).
+budget:
+  wall_seconds: 3600
+  session_units: 6.00
+  log_bytes: 8000000
+  iters_default: 4
+  node_units_default: 1.00
+  max_nodes: 8
+  no_progress_rounds: 2                  # hash do artefato inalterado 2x => halt
+  tools:                                 # ACL default; nó pode estreitar, nunca alargar
+    allow: [Read, Write, Edit, Glob, Grep]
+    deny:  [WebFetch, WebSearch, Task, Bash]
+
+# --- dono único por artefato. verify mora aqui, não na aresta (SPEC §3.2).
+artifacts:
+  handoff.md:
+    owner: scout
+    format: structured
+    sections: [OBJETIVO, PARTICAO, ACEITE, FORA_DE_ESCOPO]
+    verify:
+      non_empty: true
+      min_lines: 12
+      cmd: ["bin/has-sections", "handoff.md", "OBJETIVO", "PARTICAO", "ACEITE", "FORA_DE_ESCOPO"]
+  out/a.md: {owner: "build.a", format: prose, verify: {non_empty: true, min_lines: 8}}
+  out/b.md: {owner: "build.b", format: prose, verify: {non_empty: true, min_lines: 8}}
+  out/c.md: {owner: "build.c", format: prose, verify: {non_empty: true, min_lines: 8}}
+  out/REPORT.md:
+    owner: merge
+    format: structured
+    sections: [FEITO, NAO_FEITO, FRONTEIRAS, RISCOS]
+    verify:
+      non_empty: true
+      min_lines: 20
+      cmd: ["bin/has-sections", "out/REPORT.md", "FEITO", "NAO_FEITO", "FRONTEIRAS", "RISCOS"]
+
+nodes:
+  # ---------------------------------------------------------------- scout
+  # Relay barato: o único estado que desce é um brief curto + o nome da fatia.
+  # Passa a P1 de SPEC §1.3 => separar do fanout é legítimo.
+  - id: scout
+    type: agent
+    adapter: claude
+    prompt: prompts/scout.md
+    cwd: "."
+    reads:  ["spec/**"]                  # informativo; não é sandbox (SPEC §1.1)
+    writes: ["handoff.md"]
+    iters: 2
+    budget_units: 0.50
+    timeout_seconds: 600
+    tools:
+      allow: [Read, Glob, Grep, Write]
+      deny:  [WebFetch, WebSearch, Task, Bash, Edit]
+
+  # ---------------------------------------------------------------- fanout
+  # A forma única de declarar paralelismo. Teto duro de schema: 3.
+  - id: build
+    type: fanout
+    max: 3
+    rationale: |
+      P1 handoff: cada instância recebe handoff.md (uma página) + o nome da fatia.
+         Nenhum estado exato do scout precisa atravessar — nem ID, nem hash, nem
+         saída de comando. Passa.
+      P2 escritas: out/a.md, out/b.md, out/c.md. Prefixos literais distintos,
+         nenhum é prefixo do outro por componente. Nenhuma instância escreve em
+         spec/ nem em out/REPORT.md. Passa.
+      P3 fronteiras: a-b, a-c e b-c compartilham a convenção de cabeçalho e a
+         numeração de seção. Nenhuma instância decide isso: o dono das três é o
+         merge, declarado em merge.owns. Passa.
+      Descarte: o merge concatena e reconcilia cabeçalho; não relê spec/ nem
+      reescreve o conteúdo dos ramos. Se passar a reescrever, isto vira um nó só.
+    template:                            # sem id, sem reads, sem writes
+      adapter: claude
+      prompt: prompts/builder.md
+      cwd: "."
+      iters: 4
+      budget_units: 1.00
+      timeout_seconds: 900
+      tools:
+        allow: [Read, Write, Glob, Grep]
+        deny:  [WebFetch, WebSearch, Task, Bash, Edit]
+    partition:                           # ids derivados: build.a build.b build.c
+      - slot: a
+        reads:  ["handoff.md", "spec/a/**"]
+        writes: ["out/a.md"]
+      - slot: b
+        reads:  ["handoff.md", "spec/b/**"]
+        writes: ["out/b.md"]
+      - slot: c
+        reads:  ["handoff.md", "spec/c/**"]
+        writes: ["out/c.md"]
+
+  # ---------------------------------------------------------------- join
+  # Único ponto de convergência. Ramos não se comunicam. Sobe só com 3/3.
+  - id: merge
+    type: join
+    from: build
+    adapter: claude
+    prompt: prompts/merge.md
+    cwd: "."
+    reads:  ["handoff.md", "out/a.md", "out/b.md", "out/c.md"]
+    writes: ["out/REPORT.md"]
+    owns:   [a-b, a-c, b-c]              # todos os pares de slots, ordem lexicográfica
+    iters: 4
+    budget_units: 1.00
+    timeout_seconds: 900
+    tools:
+      allow: [Read, Write, Glob, Grep]
+      deny:  [WebFetch, WebSearch, Task, Bash]
+
+  # ---------------------------------------------------------------- checks
+  # Zero LLM. argv sem shell. O único tipo que pode aparecer no stop.
+  - id: gate
+    type: check
+    run: ["bin/gate-report", "out/REPORT.md"]
+    cwd: "."
+    timeout_seconds: 120
+
+  - id: contract
+    type: check
+    run: ["bin/check-writes", "state.json"]      # violations == []
+    cwd: "."
+    timeout_seconds: 60
+
+# --- DAG estrito no v1: check_failed é terminal, não volta para o produtor.
+edges:
+  - {from: scout, to: build,    on: artifact_valid, artifact: handoff.md,    handoff: structured}
+  - {from: build, to: merge,    on: always}                                  # sem artifact => sem handoff
+  - {from: merge, to: gate,     on: artifact_valid, artifact: out/REPORT.md, handoff: structured}
+  - {from: gate,  to: contract, on: check_passed,   check: gate}
+
+# --- a sessão para porque um comando saiu 0. Nunca porque um modelo escreveu que terminou.
+stop:
+  all_of: [gate, contract]
+  failsafe: budget                       # incondicional; exit 21

@@ -22,14 +22,16 @@ Você declara o time num arquivo versionado, roda a mesma tarefa com dois times 
 
 Nenhuma linha de runtime escrita, por decisão. O que existe é a spec, a pesquisa e o pré-registro.
 
+A spec é **paralela desde o v1**: o `fanout` é a forma única de declarar concorrência, o teto é 3, a concorrência default é `auto` degradando por utilização da janela, e o veredito imprime o número que separa paralelismo útil de paralelismo decorativo.
+
 | Documento | O que é |
 |---|---|
-| [`SPEC.md`](SPEC.md) | spec v0 (MAT-96): grafo, sessão, terminais, CLI, corte |
+| [`SPEC.md`](SPEC.md) | **spec v1 (paralela)**: 4 tipos de nó, fanout+join, escalonador de conjunto pronto, gate de janela, veredito de 3 números |
 | [`MVP.md`](MVP.md) | o protótipo: tipos de nó, predicado de conclusão, adapters com comando exato, orçamento, feed, veredito |
 | [`EXPERIMENTO.md`](EXPERIMENTO.md) | pré-registro (esqueleto): 12 tarefas, 3 braços, critérios numéricos, cláusula de morte |
 | [`START.md`](START.md) | o passo a passo do arranque, com o plano de ondas de subagentes |
-| [`graphs/v0.yaml`](graphs/v0.yaml) | o grafo de 2 nós |
-| [`research/`](research/) | teardown do Maestri, mesa-redonda, dossiê de fontes e os 4 memoriais íntegros |
+| [`graphs/v1.yaml`](graphs/v1.yaml) · [`graphs/v0.yaml`](graphs/v0.yaml) | o grafo paralelo (scout → fanout×3 → join → 2 checks) e a cadeia de 2 nós |
+| [`research/`](research/) | teardown do Maestri, mesa-redonda, dossiê de fontes, os 4 memoriais íntegros e os [rascunhos da spec v1](research/spec-v1-drafts/) |
 
 **Implementação (MAT-97):** só depois dos bloqueadores do [`EXPERIMENTO.md`](EXPERIMENTO.md) §4.
 

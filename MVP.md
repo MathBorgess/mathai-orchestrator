@@ -3,6 +3,7 @@
 **Data:** 2026-08-30 · **Issue:** [MAT-96](https://linear.app/borgesmathai/issue/MAT-96) · **Deriva de:** [`SPEC.md`](SPEC.md) (v0, já commitada)
 **Base:** [mesa-redonda](research/2026-08-30-mesa-redonda.md) · [teardown do Maestri](research/2026-08-30-maestri-teardown.md) · [memoriais](research/teammates/)
 **Status:** spec. **Nenhuma linha de runtime foi escrita nesta sessão, por decisão.**
+**Superseded em 2026-08-31 pela [`SPEC.md`](SPEC.md) v1** naquilo em que as duas divergirem — concorrência default, ciclo, retry semântico, superfície interativa e formato do veredito mudaram lá. Este arquivo continua valendo como derivação.
 
 Esta spec não substitui a `SPEC.md` — ela a estende. Onde as duas divergirem, a divergência está marcada com **emenda**. Toda escolha traz o descarte; decisão sem alternativa não entra.
 
