@@ -532,3 +532,82 @@ Mais três, todas com forma de teste: se `delta_gate` for consistentemente negat
 E a que já estava escrita: se o grafo empatar com o baseline dentro do ruído, o valor remanescente é a camada de **contrato** — `writes` verificados por diff de árvore, orçamento com corte real, parada por `check` determinístico, `permission_denials` respeitados — acima de CLIs que não têm nada disso. É uma tese mais defensável que a original, **e não precisa de paralelismo nenhum.**
 
 Nada disso é motivo para não começar. É motivo para começar pela medição. **O pior desfecho não é o grafo perder para o baseline. É o grafo perder e ninguém ter medido, porque a tela estava bonita.**
+
+---
+
+## 10. Emendas datadas
+
+A §8 manda: mudança de contrato entra como emenda datada, antes do código, e o corpo acima não é reescrito. Isto é o registro.
+
+---
+
+### Emenda A — 2026-08-31 · o time é código revisável
+
+**O que muda.** O grafo deixa de ser "um arquivo que por acaso está no repo" e passa a ter superfície própria de revisão. Entra o subcomando `orch team`, com quatro verbos:
+
+```
+orch team lint <graph>...          # a lista de recusas do §2.1, sem subir nada. 0 / 50
+orch team show <graph>             # o time renderizado para quem revisa o PR
+orch team diff <base> <head>       # diff semântico, classificado por severidade
+orch team fingerprint <path>...    # hash semântico; com N caminhos, relatório de agregação
+```
+
+Entram três coisas no contrato, e as três são normativas:
+
+1. **A declaração é somente-leitura em runtime.** O `up` grava `preflight.declaration_tree_sha256` — hash da árvore `graphs/` — antes do primeiro nó e reconfere depois do último. Divergência é erro nomeado. É a Emenda B, abaixo.
+2. **`team_fingerprint`** — hash semântico estável da declaração — é carimbado no `state.json` e no `verdict.json`.
+3. **Dois runs só são agregáveis se o `team_fingerprint` bater.** Somar o veredito de dois times mede a mudança do time, não a da tarefa. Quando não bate, o relatório imprime `NÃO AGREGÁVEL` e nomeia os grupos; `--require-same` transforma isso em exit 50, para o CI.
+
+**O que o fingerprint cobre, e por quê.** O YAML canonizado (invariante a ordem de chave e a comentário), **mais** o sha256 do conteúdo de cada `prompt` referenciado e de cada binário de `check`. Dois runs com o mesmo YAML e um `prompts/builder.md` reescrito não são o mesmo time, e agregá-los em silêncio é exatamente o erro que o fingerprint existe para impedir. Fica **fora**: `rationale`, que o loader não lê e que não muda comportamento — o `diff` mostra a mudança como `neutra`, o fingerprint ignora.
+
+> **Escolhida / descartada.** Diff **semântico**, não textual. Custo: ~380 linhas de código que precisam ser mantidas junto do schema; um campo novo no grafo que ninguém ensinar ao `diff` aparece como nada em vez de aparecer como linha. Ganho: um `git diff` de YAML mostra `+ writes: ["out/a.md", "src/**"]`; o revisor precisa ler **"`build.a` ganhou `src/**` no contrato de escrita"**, **"o teto de fanout subiu de 2 para 3"**, **"o `stop` deixou de exigir o check `contract`"**, **"`verify.min_lines` removido: o portão do artefato afrouxou"**. São quatro frases sobre **poder**, e nenhuma delas está na linha que mudou. Descartado confiar no `git diff`: a mudança mais perigosa deste schema — afrouxar o portão que decide a parada — é uma linha removida, e linha removida é o que o olho pula.
+
+> **Escolhida / descartada.** Classificar em **alarga poder / restringe / neutra**, e imprimir os que alargam primeiro. Custo: a régua é opinativa e vai errar em caso de fronteira (um `timeout` maior é mais poder ou mais paciência?). Ganho: um revisor com 40 segundos lê a primeira seção e já sabe se o PR aumenta o que o time pode fazer no repo dele. Descartado listar tudo em ordem de arquivo: aí a linha que libera `Bash` num nó fica entre duas linhas de comentário reescrito.
+
+> **Escolhida / descartada.** `head` que não carrega é **recusa (exit 50)**, não achado de revisão. Custo: o revisor não recebe um diff parcial de um grafo quebrado. Ganho: grafo inválido é erro de compilação (§2.1), e a mensagem do loader já nomeia as duas instâncias e os dois globs quando a partição deixa de ser disjunta — que é mais útil que uma linha de diff dizendo "partition mudou".
+
+> **Escolhida / descartada.** `--fail-on-widening` sai **50**, a mesma faixa de "recusa sobre uma declaração", e não um código novo. Custo: um script não distingue "grafo inválido" de "mudança recusada por política" sem ler o texto. Ganho: a tabela de exit codes do §6.1 é sobre sessões; inventar uma segunda faixa para uma ferramenta de revisão duplicaria o vocabulário por um ganho de um bit.
+
+**Contra qual buraco da concorrência ela existe.** O Maestri guarda a partitura em `~/.maestri/partituras` — fora do repo, não versionada com o projeto, não revisável. A documentação do Claude Code Agent Teams afirma que **não existe equivalente em nível de projeto** para a config de time, e que edição à mão é sobrescrita. O Grok Bot resolve a aresta em runtime, pelo modelo, e não a grava como aresta comparável entre execuções. Nos três, a pergunta *"o que exatamente mudou no meu time no commit de ontem?"* não tem resposta mecânica. Aqui ela tem, e a resposta vem classificada por quanto poder foi entregue.
+
+*Nota de honestidade, que a mesa-redonda já tinha registrado:* grafo versionado no repo foi julgado **"buraco real, admitido pelo fornecedor, mas copiável numa tarde — substrato, não categoria"**. Esta emenda não reabre esse julgamento. O que ela faz é transformar o substrato em algo com **consequência mensurável**: o fingerprint como condição de agregação liga a declaração ao veredito, e é o veredito — não o arquivo — que é a categoria.
+
+---
+
+### Emenda B — 2026-08-31 · o desvio dinâmico, e por que ele nunca volta para a declaração
+
+**O problema.** O `orch` decide coisas em runtime: o escalonador de conjunto pronto escolhe a ordem (§3.3), o gate degrada a concorrência por `utilization` (§3.4, §4.6), o worktree é criado ou não conforme o ambiente (§2.4), e a §6 nomeia mutação/reparo de topologia como evolução futura. Declarar o time como arquivo versionado **e** ter runtime que decide é a receita clássica de duas verdades — a mesma que a §1.5 já recusou para `state.json` × `events.jsonl`.
+
+**A invariante, normativa.**
+
+> **O runtime nunca escreve em `graphs/`.** O arquivo versionado é a **declaração**. Tudo que o runtime decide — concorrência efetiva, ordem escolhida, degradação do gate, worktree criado, baseline pulado por flag, e qualquer reparo futuro — é registrado em `state.json.deviations` como **desvio declarado contra a declaração**, e **nunca** volta para o YAML.
+
+Cada desvio carrega quatro campos: `kind`, `declared`, `effective`, `why`. Lado a lado, porque um desvio sem o que ele desviou não é registro, é log.
+
+**Como é provada.** `preflight.declaration_tree_sha256` é gravado antes do primeiro nó e reconferido depois do último (`..._after`). O teste `test_runtime_never_writes_the_declaration` tira o hash da árvore `graphs/` antes e depois de um `up` completo, **incluindo o caminho em que o gate degradou a concorrência**. Se algum dia alguém implementar mutação de topologia, o teste quebra e a pessoa é obrigada a decidir conscientemente — que é o ponto.
+
+**Onde a mutação de topologia entra, se entrar.** Por aqui, e só por aqui: uma mutação futura escreve uma **cópia** no `session_dir` e um desvio em `state.json`; ela **não** edita `graphs/*.yaml`. O campo `state.json.mutations` (§1.5, vazio no v1) é o lugar dela. Uma mutação que edita o arquivo versionado destrói a comparabilidade entre runs — o `team_fingerprint` do run deixaria de descrever o que rodou — e é por isso que ela é recusada por invariante, não por gosto.
+
+> **Escolhida / descartada.** Desvio registrado no ledger, não aplicado à declaração. Custo: o operador que quer "salvar o que funcionou" tem que editar o YAML à mão, lendo o desvio. Ganho: a declaração continua sendo o que **um humano decidiu**, e o `state.json` continua sendo o que **a máquina fez** — e a pergunta "o grafo declarado é o grafo executado?" continua tendo resposta. Descartado o auto-tuning que reescreve o grafo: é a feature que faz o repo parar de poder responder essa pergunta, e ela é a propriedade que o produto vende.
+
+> **Escolhida / descartada.** A ordem de lançamento é gravada como desvio, mesmo não sendo "desvio" de nada declarado. Custo: uma linha de ruído em toda sessão. Ganho: o `ready_set` recalculado é a decisão dinâmica mais invisível do sistema, e sem o registro não há como reconstruir por que dois runs do mesmo time tiveram paredes diferentes.
+
+---
+
+### Emenda C — 2026-08-31 · `auto` degrada quando falta `git worktree`; `1..3` explícito recusa
+
+**O que muda.** A §2.1 lista *"concorrência > 1 com `git worktree` indisponível"* entre as recusas de preflight. A emenda mantém a recusa (exit 40) para `--max-concurrency 2` ou `3` **explícito**, e faz `--max-concurrency auto` **degradar para 1**, com aviso no stderr e o motivo gravado em `preflight.isolation_note` e num desvio `isolation`.
+
+Rodar `k > 1` **sem** isolamento por instância continua não sendo opção em nenhum caminho.
+
+> **Escolhida / descartada.** Custo: a mitigação vira condicional, e alguém que roda `auto` num diretório sem git recebe concorrência 1 sem ter pedido — exatamente o que a §2.1 queria evitar ao recusar. Ganho: `auto` é, por definição, o modo que degrada — ele já degrada por `utilization` (§3.4), e degradar por ausência de worktree é a mesma política aplicada a outro recurso. E recusar ali quebra a promessa de que alguém clona o repo e roda um comando: o primeiro contato passa a ser um erro de preflight sobre uma feature que o usuário não pediu. Descartado recusar sempre: transforma o default numa armadilha para quem nunca vai usar fanout. Descartado degradar sempre: um operador que **escreveu** `--max-concurrency 3` pediu paralelismo isolado, e entregar 1 em silêncio é o "ajuste silencioso" que a §2 proíbe em outra linha.
+
+---
+
+### Emendas nomeadas e adiadas — 2026-08-31
+
+Avaliadas nesta rodada, **fora do código por corte de escopo**, e registradas aqui para não parecerem esquecidas:
+
+- **O humano como nó do grafo.** Um nó cujo executor é a sessão interativa do dono, com contrato de escrita próprio, aparecendo no `state.json` e no veredito como qualquer outro nó. Nenhum dos quatro concorrentes tem. Esbarra na arbitragem 2 (§0): um nó headless não tem canal para pedir; um nó humano precisaria do canal que o v1 não tem. Entra quando `--input-format stream-json` for verificado.
+- **A sessão de trabalho real produz veredito.** Hoje o veredito existe para o experimento. Se toda sessão de código real também produzir um número comparável, o instrumento sai da bancada. Depende de um `baseline` que faça sentido fora de uma tarefa congelada, e isso ainda não foi desenhado.
+- **Contrato de escrita e parada verificável como produto autônomo.** É a tese de reserva do pesquisador, registrada na §9: mesmo com o grafo empatando com o solo, `writes` verificados por diff de árvore, orçamento com corte real, parada por `check` determinístico e `permission_denials` respeitados continuam sendo valor que nenhum dos três concorrentes entrega. Já está quase todo implementado; falta a superfície que o vende como tal.
