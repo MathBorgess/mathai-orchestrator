@@ -41,7 +41,7 @@ A spec é **paralela desde o v1**: o `fanout` é a forma única de declarar conc
 | [`graphs/v1.yaml`](graphs/v1.yaml) · [`graphs/v0.yaml`](graphs/v0.yaml) | o grafo paralelo (scout → fanout×3 → join → 2 checks) e a cadeia de 2 nós |
 | [`research/`](research/) | teardown do Maestri, mesa-redonda, dossiê de fontes, os 4 memoriais íntegros e os [rascunhos da spec v1](research/spec-v1-drafts/) |
 
-**Implementação (MAT-97):** só depois dos bloqueadores do [`EXPERIMENTO.md`](EXPERIMENTO.md) §4.
+**Implementação (MAT-97):** v0 is `python -m orch up graphs/v0.yaml --session-dir .sessions/<id>`. v1 waits on [`EXPERIMENTO.md`](EXPERIMENTO.md) §4.
 
 ## Pesquisa
 
