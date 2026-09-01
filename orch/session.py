@@ -1,3 +1,5 @@
+"""Create and lock a session directory. One session = one team."""
+
 from __future__ import annotations
 
 import fcntl
