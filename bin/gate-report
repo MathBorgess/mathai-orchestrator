@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Deterministic gate: REPORT exists, is non-empty, and has the v1 sections."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+SECTIONS = ("FEITO", "NAO_FEITO", "FRONTEIRAS", "RISCOS")
+
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        print("usage: gate-report REPORT.md", file=sys.stderr)
+        return 2
+    path = Path(argv[0])
+    if not path.is_file():
+        print(f"gate-report: missing {path}", file=sys.stderr)
+        return 1
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if not text.strip():
+        print("gate-report: empty report", file=sys.stderr)
+        return 1
+    missing = [s for s in SECTIONS if s not in text]
+    if missing:
+        print("gate-report: missing " + ", ".join(missing), file=sys.stderr)
+        return 1
+    if len(text.splitlines()) < 20:
+        print("gate-report: report shorter than 20 lines", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
